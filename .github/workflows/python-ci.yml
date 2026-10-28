@@ -1,0 +1,62 @@
+name: Python CI
+
+# Reusable workflow: install, fatal-error lint, byte-compile, optional pytest, and a dependency audit.
+# Call it from a repo with:
+#   jobs:
+#     ci:
+#       uses: MusDev99/ci-workflows/.github/workflows/python-ci.yml@main
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: '3.12'
+      requirements-file:
+        type: string
+        default: requirements.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, compile, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+          cache-dependency-path: ${{ inputs.requirements-file }}
+      - run: pip install -r ${{ inputs.requirements-file }}
+      - name: Lint (syntax errors and undefined names only)
+        run: |
+          pip install ruff
+          ruff check . --select E9,F63,F7,F82 --exclude venv,.venv
+      - name: Compile
+        run: python -m compileall -q . -x '(venv|\.venv)'
+      - name: Test (only if tests exist)
+        run: |
+          if ls test_*.py *_test.py tests 2>/dev/null | grep -q .; then
+            pip install pytest
+            pytest
+          fi
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - run: pip install pip-audit
+      - run: pip-audit -r ${{ inputs.requirements-file }}

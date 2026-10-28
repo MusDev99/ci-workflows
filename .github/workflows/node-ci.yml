@@ -1,0 +1,68 @@
+name: Node CI
+
+# Reusable workflow: lint, typecheck and build a Node project, plus a production dependency audit.
+# Call it from a repo with:
+#   jobs:
+#     ci:
+#       uses: MusDev99/ci-workflows/.github/workflows/node-ci.yml@main
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: '22'
+      audit-level:
+        description: Fail the audit on advisories at or above this level (low, moderate, high, critical).
+        type: string
+        default: high
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, typecheck, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          # Newer frameworks can require a recent 22.x patch; skip an older cached one.
+          check-latest: true
+          cache: npm
+      - run: npm ci
+      - name: Verify
+        run: |
+          has_script() { node -e "process.exit(require('./package.json').scripts?.['$1'] ? 0 : 1)"; }
+          if has_script verify; then
+            npm run verify
+          else
+            if has_script lint; then npm run lint; fi
+            if [ -f tsconfig.json ]; then npx tsc --noEmit; fi
+            if has_script build; then npm run build; fi
+          fi
+      - name: Test (only if the repo defines tests)
+        run: |
+          if node -e "const s=require('./package.json').scripts||{}; process.exit(s.test && !/no test specified/.test(s.test) ? 0 : 1)"; then
+            npm test
+          fi
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          check-latest: true
+      # Production dependencies only: dev-tooling advisories don't ship to users.
+      - run: npm audit --omit=dev --audit-level=${{ inputs.audit-level }}
